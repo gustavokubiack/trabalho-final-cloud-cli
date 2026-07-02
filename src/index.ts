@@ -12,6 +12,7 @@ import { createAll } from "./commands/create-all.js";
 import { cleanupAll } from "./commands/cleanup-all.js";
 import { diagnose } from "./commands/diagnose.js";
 import { setupSsh } from "./commands/ssh.js";
+import { connectDb } from "./commands/connect-db.js";
 
 async function collectCredentials(): Promise<AwsCredentials> {
   const accessKeyId = await text({
@@ -64,6 +65,7 @@ async function main() {
       { value: "cleanup-all", label: "Deletar Tudo", hint: "Remove toda a infraestrutura" },
       { value: "diagnose", label: "Diagnosticar", hint: "Verifica saúde da infraestrutura" },
       { value: "ssh", label: "SSH", hint: "Libera SSH e mostra comando de conexão" },
+      { value: "connect-db", label: "Conectar ao Banco", hint: "SSH + psql interativo ou túnel para o RDS" },
       { value: "quit", label: "Sair", hint: "Encerra a aplicação"}
     ],
   });
@@ -81,6 +83,9 @@ async function main() {
       break;
     case "ssh":
       await setupSsh(creds);
+      break;
+    case "connect-db":
+      await connectDb(creds);
       break;
     case "quit":
       cancelAndExit();
