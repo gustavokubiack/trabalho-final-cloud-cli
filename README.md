@@ -240,6 +240,3 @@ A aplicação escuta na porta `3000`, que é o alvo registrado no Target Group d
 - **SSH falha com "EC2 Instance Connect falhou"**: a instância precisa ter sido criada nesta mesma execução da CLI (para ter o Security Group correto). Recrie a infraestrutura com `Criar Tudo` se necessário.
 - **Erro `InvalidPermission.Duplicate`**: é tratado silenciosamente — significa que a regra do Security Group já existia.
 
-## Licença
-
-ISC
