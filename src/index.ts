@@ -5,6 +5,7 @@ import {
   isCancel,
   cancel,
   text,
+  password,
 } from "@clack/prompts";
 import type { AwsCredentials } from "./types/index.js";
 import { createAll } from "./commands/create-all.js";
@@ -19,13 +20,13 @@ async function collectCredentials(): Promise<AwsCredentials> {
   });
   if (isCancel(accessKeyId)) cancelAndExit();
 
-  const secretAccessKey = await text({
+  const secretAccessKey = await password({
     message: "AWS Secret Access Key",
     validate: (v) => (v ? undefined : "Campo obrigatório"),
   });
   if (isCancel(secretAccessKey)) cancelAndExit();
 
-  const sessionToken = await text({
+  const sessionToken = await password({
     message: "AWS Session Token (Learner Labs)",
     validate: (v) => (v ? undefined : "Campo obrigatório"),
   });
