@@ -18,13 +18,22 @@ function cancelAndExit(): never {
   process.exit(0);
 }
 
-export async function setupSsh(creds: AwsCredentials) {
-  const appName = await text({
-    message: "Nome do projeto/aplicação",
-    validate: (v) => (v ? undefined : "Campo obrigatório"),
-  });
-  if (isCancel(appName)) return cancelAndExit();
+export interface SshAccess {
+  pemPath: string;
+  publicIp: string;
+}
 
+/**
+ * Garante que exista um key pair local, libera a porta 22 no SG da aplicação,
+ * envia a chave pública via EC2 Instance Connect e retorna o caminho do .pem
+ * junto com o IP público de uma instância pronta para conexão.
+ *
+ * Retorna null (registrando o motivo via log) se não for possível preparar o acesso.
+ */
+export async function ensureSshAccess(
+  creds: AwsCredentials,
+  appName: string
+): Promise<SshAccess | null> {
   const ec2Client = createEc2Client(creds);
   const eicClient = createEc2InstanceConnectClient(creds);
 
@@ -39,7 +48,7 @@ export async function setupSsh(creds: AwsCredentials) {
       if (existing.KeyPairs?.length) {
         log.warn(`Key pair "${keyName}" existe na AWS mas não encontrei ${pemPath} localmente.`);
         log.warn(`Crie um novo ou copie o .pem para este diretório.`);
-        return;
+        return null;
       }
     } catch { }
 
@@ -50,7 +59,7 @@ export async function setupSsh(creds: AwsCredentials) {
     const pem = result.KeyMaterial;
     if (!pem) {
       log.error("Falha ao obter KeyMaterial do key pair");
-      return;
+      return null;
     }
     fs.writeFileSync(pemPath, pem);
     fs.chmodSync(pemPath, 0o400);
@@ -89,11 +98,20 @@ export async function setupSsh(creds: AwsCredentials) {
     }
   } catch (err) {
     log.error(`Erro ao configurar SSH SG: ${(err as Error).message}`);
-    return;
+    return null;
   }
 
+  let publicKey: string;
   try {
-    const publicKey = execSync(`ssh-keygen -y -f "${pemPath}"`).toString().trim();
+    publicKey = execSync(`ssh-keygen -y -f "${pemPath}"`).toString().trim();
+  } catch (err) {
+    log.error(`Erro ao extrair chave pública: ${(err as Error).message}`);
+    log.info("Certifique-se de ter o ssh-keygen instalado.");
+    return null;
+  }
+
+  let publicIp = "";
+  try {
     const instances = await ec2Client.send(new DescribeInstancesCommand({
       Filters: [
         { Name: "tag:Name", Values: [`${appName}-*`] },
@@ -111,6 +129,9 @@ export async function setupSsh(creds: AwsCredentials) {
             AvailabilityZone: inst.Placement?.AvailabilityZone,
           }));
           log.success(`Chave pública enviada para ${inst.InstanceId}`);
+          if (!publicIp && inst.PublicIpAddress) {
+            publicIp = inst.PublicIpAddress;
+          }
         } catch (eicErr) {
           log.warn(`EC2 Instance Connect falhou: ${(eicErr as Error).message}`);
           log.warn("Tente recriar a infraestrutura (Criar Tudo) para gerar instância com key pair.");
@@ -118,32 +139,30 @@ export async function setupSsh(creds: AwsCredentials) {
       }
     }
   } catch (err) {
-    log.error(`Erro ao extrair chave pública: ${(err as Error).message}`);
-    log.info("Certifique-se de ter o ssh-keygen instalado.");
-    return;
+    log.error(`Erro ao buscar instâncias: ${(err as Error).message}`);
+    return null;
   }
 
-  try {
-    const instances = await ec2Client.send(new DescribeInstancesCommand({
-      Filters: [
-        { Name: "tag:Name", Values: [`${appName}-*`] },
-        { Name: "instance-state-name", Values: ["running"] },
-      ],
-    }));
-    for (const res of instances.Reservations ?? []) {
-      for (const inst of res.Instances ?? []) {
-        const ip = inst.PublicIpAddress;
-        if (ip) {
-          log.success(`SSH pronto! Conecte-se:`);
-          console.log(`  ssh -i ${pemPath} ubuntu@${ip}`);
-          console.log(`  cat /tmp/user-data.log`);
-          console.log(`  sudo journalctl -u web-app -n 50 --no-pager`);
-        } else {
-          log.warn(`Instância ${inst.InstanceId} sem IP público`);
-        }
-      }
-    }
-  } catch (err) {
-    log.error(`Erro ao buscar IP da EC2: ${(err as Error).message}`);
+  if (!publicIp) {
+    log.warn("Nenhuma instância em execução com IP público foi encontrada.");
+    return null;
   }
+
+  return { pemPath, publicIp };
+}
+
+export async function setupSsh(creds: AwsCredentials) {
+  const appName = await text({
+    message: "Nome do projeto/aplicação",
+    validate: (v) => (v ? undefined : "Campo obrigatório"),
+  });
+  if (isCancel(appName)) return cancelAndExit();
+
+  const access = await ensureSshAccess(creds, appName as string);
+  if (!access) return;
+
+  log.success("SSH pronto! Conecte-se:");
+  console.log(`  ssh -i ${access.pemPath} ubuntu@${access.publicIp}`);
+  console.log(`  cat /tmp/user-data.log`);
+  console.log(`  sudo journalctl -u web-app -n 50 --no-pager`);
 }
